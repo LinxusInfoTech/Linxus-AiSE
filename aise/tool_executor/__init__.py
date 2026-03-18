@@ -25,10 +25,12 @@ Example usage:
 from aise.tool_executor.allowlist import CommandAllowlist
 from aise.tool_executor.runner import SubprocessRunner
 from aise.tool_executor.base import ToolExecutor, ToolResult
+from aise.tool_executor.output_parser import OutputParser
 
 __all__ = [
     "CommandAllowlist",
     "SubprocessRunner",
     "ToolExecutor",
     "ToolResult",
+    "OutputParser",
 ]

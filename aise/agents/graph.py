@@ -29,7 +29,9 @@ from aise.agents.state import AiSEState, update_state, create_initial_state
 from aise.agents.ticket_agent import TicketAgent
 from aise.agents.knowledge_agent import KnowledgeAgent
 from aise.agents.engineer_agent import EngineerAgent
+from aise.agents.tool_agent import ToolAgent
 from aise.agents.browser_agent import BrowserAgent, should_use_browser_fallback
+from aise.user_style.style_injector import StyleInjector
 from aise.agents.approval import log_approval_request
 from aise.ai_engine.router import LLMRouter
 from aise.ticket_system.base import TicketProvider
@@ -60,7 +62,8 @@ class AiSEGraph:
         knowledge_agent: Optional[KnowledgeAgent],
         engineer_agent: EngineerAgent,
         ticket_provider: Optional[TicketProvider] = None,
-        browser_agent: Optional[BrowserAgent] = None
+        browser_agent: Optional[BrowserAgent] = None,
+        tool_agent: Optional["ToolAgent"] = None
     ):
         """Initialize AiSEGraph.
         
@@ -70,12 +73,15 @@ class AiSEGraph:
             engineer_agent: Diagnosis and response generation agent
             ticket_provider: Ticket system provider (optional)
             browser_agent: Browser automation agent (optional)
+            tool_agent: Tool execution agent (optional)
         """
         self._ticket_agent = ticket_agent
         self._knowledge_agent = knowledge_agent
         self._engineer_agent = engineer_agent
         self._ticket_provider = ticket_provider
         self._browser_agent = browser_agent
+        self._tool_agent = tool_agent or ToolAgent()
+        self._style_injector: Optional[StyleInjector] = None
         
         # Build the graph
         self._graph = self._build_graph()
@@ -142,6 +148,7 @@ class AiSEGraph:
         # Add nodes for each step
         workflow.add_node("classify", self._classify_node)
         workflow.add_node("retrieve_knowledge", self._retrieve_knowledge_node)
+        workflow.add_node("inject_style", self._inject_style_node)
         workflow.add_node("diagnose", self._diagnose_node)
         workflow.add_node("plan_tools", self._plan_tools_node)
         workflow.add_node("execute_tools", self._execute_tools_node)
@@ -158,11 +165,12 @@ class AiSEGraph:
             self._should_retrieve_knowledge,
             {
                 "retrieve": "retrieve_knowledge",
-                "skip": "diagnose"
+                "skip": "inject_style"
             }
         )
         
-        workflow.add_edge("retrieve_knowledge", "diagnose")
+        workflow.add_edge("retrieve_knowledge", "inject_style")
+        workflow.add_edge("inject_style", "diagnose")
         workflow.add_edge("diagnose", "plan_tools")
         
         workflow.add_conditional_edges(
@@ -346,6 +354,43 @@ class AiSEGraph:
             # Continue without knowledge context
             return state
     
+    async def _inject_style_node(self, state: AiSEState) -> AiSEState:
+        """Inject user style context before diagnosis.
+
+        Args:
+            state: Current state
+
+        Returns:
+            Updated state with user_style_context populated (if available)
+        """
+        logger.info("node_inject_style_start")
+
+        if not self._style_injector:
+            logger.info("node_inject_style_skip", reason="no_style_injector")
+            return state
+
+        try:
+            # Use the most recent user message as the query
+            query = ""
+            for msg in reversed(state["messages"]):
+                if msg.get("role") == "user":
+                    query = msg["content"]
+                    break
+
+            if not query:
+                return state
+
+            style_context = await self._style_injector.get_style_context(query)
+
+            if style_context:
+                logger.info("node_inject_style_complete", context_length=len(style_context))
+                return update_state(state, user_style_context=style_context)
+
+        except Exception as e:
+            logger.warning("node_inject_style_failed", error=str(e))
+
+        return state
+
     async def _diagnose_node(self, state: AiSEState) -> AiSEState:
         """Generate diagnosis.
         
@@ -373,38 +418,27 @@ class AiSEGraph:
             raise ProviderError(f"Diagnosis failed: {str(e)}")
     
     async def _plan_tools_node(self, state: AiSEState) -> AiSEState:
-        """Plan tool execution (placeholder for now).
-        
-        Args:
-            state: Current state
-        
-        Returns:
-            Updated state
-        """
+        """Plan tool execution based on diagnosis."""
         logger.info("node_plan_tools_start")
-        
-        # TODO: Implement tool planning logic
-        # For now, just log and continue
-        logger.info("node_plan_tools_complete", planned_tools=0)
-        
-        return state
+        planned = self._tool_agent.plan_execution(state)
+        logger.info("node_plan_tools_complete", planned_tools=len(planned))
+        # Store planned commands in actions_taken for routing decision
+        return update_state(
+            state,
+            actions_taken=state["actions_taken"] + (
+                [f"Planned tools: {', '.join(planned)}"] if planned else []
+            )
+        )
     
     async def _execute_tools_node(self, state: AiSEState) -> AiSEState:
-        """Execute planned tools (placeholder for now).
-        
-        Args:
-            state: Current state
-        
-        Returns:
-            Updated state with tool_results
-        """
+        """Execute planned tools via ToolAgent."""
         logger.info("node_execute_tools_start")
-        
-        # TODO: Implement tool execution logic
-        # For now, just log and continue
-        logger.info("node_execute_tools_complete", executed_tools=0)
-        
-        return state
+        new_state = await self._tool_agent.execute_and_analyze(state)
+        logger.info(
+            "node_execute_tools_complete",
+            results_count=len(new_state.get("tool_results") or [])
+        )
+        return new_state
     
     async def _generate_response_node(self, state: AiSEState) -> AiSEState:
         """Generate final response (uses existing diagnosis).
@@ -597,17 +631,13 @@ class AiSEGraph:
         self,
         state: AiSEState
     ) -> Literal["execute", "skip", "approval_required"]:
-        """Determine if tools should be executed.
-        
-        Args:
-            state: Current state
-        
-        Returns:
-            "execute", "skip", or "approval_required"
-        """
-        # TODO: Implement tool planning logic
-        # For now, always skip tool execution
-        return "skip"
+        """Determine if tools should be executed."""
+        planned = self._tool_agent.plan_execution(state)
+        if not planned:
+            return "skip"
+        # In approval mode, still execute read-only diagnostic tools;
+        # the reply posting is gated separately via _should_post_reply.
+        return "execute"
     
     def _should_post_reply(
         self,
