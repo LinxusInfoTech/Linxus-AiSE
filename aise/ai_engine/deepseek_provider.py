@@ -72,7 +72,8 @@ class DeepSeekProvider(LLMProvider):
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json"
             },
-            timeout=60.0
+            timeout=60.0,
+            verify=True,  # Enforce TLS certificate verification
         )
         
         logger.info(

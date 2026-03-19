@@ -44,11 +44,12 @@ class FreshdeskProvider(TicketProvider):
         self.timeout = timeout
         self.base_url = f"https://{self.domain}/api/v2"
         
-        # Create HTTP client with authentication
+        # Create HTTP client with authentication and explicit TLS verification
         # Freshdesk uses basic auth with API key as username and 'X' as password
         self.client = httpx.AsyncClient(
             auth=(api_key, "X"),
             timeout=timeout,
+            verify=True,  # Enforce TLS certificate verification
             headers={"Content-Type": "application/json"}
         )
         

@@ -194,7 +194,20 @@ class ConfigPersistence:
             
             # Apply to running config instance
             await self._apply_to_runtime(key, value)
-            
+
+            # Audit log the config change
+            import asyncio
+            from aise.core.audit import log_security_event
+            asyncio.ensure_future(log_security_event(
+                event_type="config_change",
+                action=f"set {key}",
+                component=component,
+                success=True,
+                resource_type="configuration",
+                resource_id=key,
+                details={"is_sensitive": is_sensitive},
+            ))
+
             return True
             
         except Exception as e:

@@ -12,6 +12,7 @@ Requirements:
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
 from datetime import datetime
+import time
 import structlog
 
 from aise.tool_executor.allowlist import CommandAllowlist
@@ -97,6 +98,7 @@ class ToolExecutor:
     - Allowlist validation before execution
     - Subprocess execution without shell=True
     - Timeout enforcement
+    - Per-ticket rate limiting (10 commands/minute)
     - Structured output capture
     - Comprehensive audit logging
     
@@ -110,6 +112,10 @@ class ToolExecutor:
         audit_log: List of all executed commands (for audit trail)
     """
     
+    # Rate limit: 10 commands per 60 seconds per ticket
+    RATE_LIMIT_MAX = 10
+    RATE_LIMIT_WINDOW = 60
+
     def __init__(
         self,
         allowlist: Optional[CommandAllowlist] = None,
@@ -127,19 +133,54 @@ class ToolExecutor:
         self.runner = runner or SubprocessRunner(default_timeout=default_timeout)
         self.audit_log: List[Dict[str, Any]] = []
         self._tracer = get_tracer("aise.tool_executor")
+        # Per-ticket rate limit state: ticket_id -> list of timestamps
+        self._rate_limit_state: Dict[str, List[float]] = {}
         
         logger.info(
             "ToolExecutor initialized",
             default_timeout=default_timeout,
             allowed_commands=list(self.allowlist.get_allowed_commands().keys())
         )
+
+    def _check_rate_limit(self, ticket_id: str) -> bool:
+        """Check per-ticket tool execution rate limit (10 commands/minute).
+
+        Args:
+            ticket_id: Ticket identifier for rate limit bucketing
+
+        Returns:
+            True if within limit, False if exceeded
+        """
+        now = time.monotonic()
+        window_start = now - self.RATE_LIMIT_WINDOW
+
+        if ticket_id not in self._rate_limit_state:
+            self._rate_limit_state[ticket_id] = []
+
+        # Evict timestamps outside the sliding window
+        self._rate_limit_state[ticket_id] = [
+            ts for ts in self._rate_limit_state[ticket_id] if ts > window_start
+        ]
+
+        if len(self._rate_limit_state[ticket_id]) >= self.RATE_LIMIT_MAX:
+            logger.warning(
+                "tool_rate_limit_exceeded",
+                ticket_id=ticket_id,
+                count=len(self._rate_limit_state[ticket_id]),
+                limit=self.RATE_LIMIT_MAX,
+            )
+            return False
+
+        self._rate_limit_state[ticket_id].append(now)
+        return True
     
     async def run(
         self,
         command: str,
         timeout: Optional[int] = None,
         env: Optional[Dict[str, str]] = None,
-        cwd: Optional[str] = None
+        cwd: Optional[str] = None,
+        ticket_id: Optional[str] = None,
     ) -> ToolResult:
         """Execute a command with allowlist validation and audit logging.
         
@@ -155,6 +196,7 @@ class ToolExecutor:
             timeout: Timeout in seconds (uses runner's default if not specified)
             env: Additional environment variables
             cwd: Working directory for command execution
+            ticket_id: Optional ticket ID for per-ticket rate limiting
         
         Returns:
             ToolResult with execution details
@@ -163,6 +205,7 @@ class ToolExecutor:
             ForbiddenCommandError: If command is not in allowlist
             ToolExecutionTimeout: If command exceeds timeout
             ToolExecutionError: If command execution fails
+            ToolExecutionError: If per-ticket rate limit exceeded
         
         Example:
             >>> executor = ToolExecutor()
@@ -172,6 +215,22 @@ class ToolExecutor:
             >>> print(result.stdout)
             {...JSON output...}
         """
+        # Step 0: Per-ticket rate limiting
+        if ticket_id and not self._check_rate_limit(ticket_id):
+            self._audit_log_execution(
+                command=command,
+                exit_code=-1,
+                duration_ms=0,
+                error="Rate limit exceeded",
+                timestamp=datetime.utcnow().isoformat(),
+            )
+            tool_name = command.split()[0] if command else "unknown"
+            record_tool_execution(tool_name, "rate_limited", 0.0)
+            raise ToolExecutionError(
+                f"Tool execution rate limit exceeded for ticket {ticket_id} "
+                f"({self.RATE_LIMIT_MAX} commands/{self.RATE_LIMIT_WINDOW}s)"
+            )
+
         # Step 1: Validate command against allowlist
         try:
             self.allowlist.validate_or_raise(command)
@@ -337,21 +396,12 @@ class ToolExecutor:
         error: Optional[str] = None
     ) -> None:
         """Log command execution for audit trail.
-        
-        This method maintains an in-memory audit log and logs to the
-        structured logger for persistence.
-        
-        Args:
-            command: Executed command
-            exit_code: Process exit code
-            duration_ms: Execution duration in milliseconds
-            timestamp: ISO 8601 timestamp
-            stdout_length: Length of stdout
-            stderr_length: Length of stderr
-            stdin_length: Length of stdin (if applicable)
-            error: Error message (if execution failed)
+
+        Maintains an in-memory audit log, emits a structured log line, and
+        asynchronously persists the event to the PostgreSQL audit_log table
+        via aise.core.audit.log_security_event (fire-and-forget).
         """
-        audit_entry = {
+        audit_entry: Dict[str, Any] = {
             "timestamp": timestamp,
             "command": command,
             "exit_code": exit_code,
@@ -359,23 +409,44 @@ class ToolExecutor:
             "stdout_length": stdout_length,
             "stderr_length": stderr_length,
         }
-        
+
         if stdin_length > 0:
             audit_entry["stdin_length"] = stdin_length
-        
+
         if error:
             audit_entry["error"] = error
-        
-        # Add to in-memory audit log
+
+        # In-memory audit log
         self.audit_log.append(audit_entry)
-        
-        # Log to structured logger for persistence
+
+        # Structured log
         if error:
             logger.error("Tool execution failed", **audit_entry)
         elif exit_code != 0:
             logger.warning("Tool execution completed with error", **audit_entry)
         else:
             logger.info("Tool execution completed successfully", **audit_entry)
+
+        # Persist to PostgreSQL audit_log (fire-and-forget)
+        import asyncio
+        from aise.core.audit import log_security_event
+
+        success = (exit_code == 0) and not error
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(
+                    log_security_event(
+                        event_type="command_execution",
+                        action=command,
+                        component="tool_executor",
+                        success=success,
+                        details=audit_entry,
+                        error_message=error,
+                    )
+                )
+        except RuntimeError:
+            pass  # No event loop — skip DB write
     
     def get_audit_log(self) -> List[Dict[str, Any]]:
         """Get the audit log of all command executions.

@@ -35,6 +35,7 @@ import redis.asyncio as redis
 
 from aise.core.config import get_config
 from aise.core.exceptions import ValidationError
+from aise.core.audit import log_security_event
 from aise.observability.metrics import (
     record_request,
     get_metrics_output,
@@ -301,6 +302,16 @@ async def zendesk_webhook(request: Request):
             platform="zendesk",
             client_ip=client_ip
         )
+        import asyncio
+        asyncio.ensure_future(log_security_event(
+            event_type="webhook_rejected",
+            action="ip_blocked",
+            component="webhook_server",
+            success=False,
+            resource_type="webhook",
+            resource_id="zendesk",
+            details={"client_ip": client_ip, "reason": "ip_not_in_allowlist"},
+        ))
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="IP address not allowed"
@@ -313,6 +324,15 @@ async def zendesk_webhook(request: Request):
             platform="zendesk",
             client_ip=client_ip
         )
+        asyncio.ensure_future(log_security_event(
+            event_type="rate_limit_exceeded",
+            action="webhook_rate_limited",
+            component="webhook_server",
+            success=False,
+            resource_type="webhook",
+            resource_id="zendesk",
+            details={"client_ip": client_ip},
+        ))
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded"
@@ -415,6 +435,16 @@ async def freshdesk_webhook(request: Request):
             platform="freshdesk",
             client_ip=client_ip
         )
+        import asyncio
+        asyncio.ensure_future(log_security_event(
+            event_type="webhook_rejected",
+            action="ip_blocked",
+            component="webhook_server",
+            success=False,
+            resource_type="webhook",
+            resource_id="freshdesk",
+            details={"client_ip": client_ip, "reason": "ip_not_in_allowlist"},
+        ))
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="IP address not allowed"
@@ -427,6 +457,15 @@ async def freshdesk_webhook(request: Request):
             platform="freshdesk",
             client_ip=client_ip
         )
+        asyncio.ensure_future(log_security_event(
+            event_type="rate_limit_exceeded",
+            action="webhook_rate_limited",
+            component="webhook_server",
+            success=False,
+            resource_type="webhook",
+            resource_id="freshdesk",
+            details={"client_ip": client_ip},
+        ))
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded"
@@ -529,6 +568,16 @@ async def slack_webhook(request: Request):
             platform="slack",
             client_ip=client_ip
         )
+        import asyncio
+        asyncio.ensure_future(log_security_event(
+            event_type="webhook_rejected",
+            action="ip_blocked",
+            component="webhook_server",
+            success=False,
+            resource_type="webhook",
+            resource_id="slack",
+            details={"client_ip": client_ip, "reason": "ip_not_in_allowlist"},
+        ))
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="IP address not allowed"
@@ -541,6 +590,15 @@ async def slack_webhook(request: Request):
             platform="slack",
             client_ip=client_ip
         )
+        asyncio.ensure_future(log_security_event(
+            event_type="rate_limit_exceeded",
+            action="webhook_rate_limited",
+            component="webhook_server",
+            success=False,
+            resource_type="webhook",
+            resource_id="slack",
+            details={"client_ip": client_ip},
+        ))
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Rate limit exceeded"

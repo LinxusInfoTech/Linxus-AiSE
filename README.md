@@ -1,18 +1,19 @@
 # AI Support Engineer System (AiSE)
 
-Production-grade autonomous AI agent that functions as a senior cloud support engineer.
+Production-grade autonomous AI agent that acts as a senior cloud support engineer — diagnosing infrastructure issues, responding to support tickets, and executing safe CLI diagnostics.
 
 ## Features
 
-- **Multi-LLM Support**: Claude, GPT-4, DeepSeek, Ollama with automatic failover
-- **Ticket Automation**: Zendesk, Freshdesk, Email, Slack integrations
-- **Documentation Learning**: RAG-based knowledge retrieval from official docs
-- **Secure Tool Execution**: Allowlist-enforced CLI execution (AWS, kubectl, terraform, docker, git)
-- **Browser Automation**: Playwright-based fallback for ticket systems
-- **Three Operational Modes**: Interactive, Approval-required, Fully Autonomous
-- **Web Configuration UI**: No-code setup for non-technical users
-- **Encrypted Credential Vault**: AES-256-GCM encryption for sensitive data
-- **Full Observability**: OpenTelemetry tracing, Prometheus metrics, LangSmith integration
+- **Multi-LLM Support** — Claude, GPT-4, DeepSeek, Ollama with automatic failover and circuit breakers
+- **Ticket Automation** — Zendesk, Freshdesk, Email (IMAP/SMTP), Slack integrations
+- **Documentation Learning** — RAG-based knowledge retrieval from official cloud docs
+- **Secure Tool Execution** — Allowlist-enforced CLI execution (AWS, kubectl, terraform, docker, git, ssh)
+- **Browser Automation** — Playwright-based fallback when ticket APIs are unavailable
+- **Three Operational Modes** — Interactive, Approval-required, Fully Autonomous
+- **Web Configuration UI** — No-code setup at `http://localhost:8080/config`
+- **Encrypted Credential Vault** — AES-256-GCM encryption for all sensitive data
+- **Full Observability** — OpenTelemetry tracing, Prometheus metrics, LangSmith integration
+- **Security Hardening** — HMAC webhook verification, IP allowlisting, per-ticket rate limiting, audit logging
 
 ## Quick Start
 
@@ -20,7 +21,7 @@ Production-grade autonomous AI agent that functions as a senior cloud support en
 
 - Python 3.11+
 - Docker and Docker Compose
-- At least one LLM provider API key
+- At least one LLM provider API key (Anthropic, OpenAI, DeepSeek, or local Ollama)
 
 ### Installation
 
@@ -30,109 +31,138 @@ git clone <repository-url>
 cd aise
 
 # Install dependencies with Poetry
+pip install poetry
 poetry install
 
-# Copy environment template
+# Copy environment template and add your API keys
 cp .env.example .env
+nano .env          # Set LLM_PROVIDER and at least one API key
 
-# Edit .env and add your API keys
-nano .env
-
-# Start infrastructure services
+# Start infrastructure (PostgreSQL, Redis, ChromaDB)
 docker compose up -d
 
-# Run database migrations
-poetry run python -m aise.core.init_db
-
-# Install Playwright browsers (if using browser automation)
-poetry run playwright install
+# Verify services are healthy
+docker compose ps
 ```
 
-### Configuration
+### Minimal .env configuration
 
-AiSE supports multiple configuration methods with the following precedence:
+```bash
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
 
-1. Environment variables (highest priority)
-2. .env file in project directory
+POSTGRES_URL=postgresql://aise:aise@localhost:5432/aise
+REDIS_URL=redis://localhost:6379
+CHROMA_HOST=localhost
+CHROMA_PORT=8001
+```
+
+### First run
+
+```bash
+# Ask a question (no ticket system needed)
+poetry run aise ask "Why is my EC2 instance unreachable?"
+
+# Open the web configuration UI
+poetry run aise start
+# Then visit http://localhost:8080/config
+```
+
+## Configuration
+
+AiSE supports multiple configuration methods with the following precedence (highest to lowest):
+
+1. Environment variables
+2. `.env` file in project directory
 3. Config UI database settings
-4. System-level config files (~/.aws/config, ~/.kube/config, etc.)
-5. Default values (lowest priority)
+4. System-level config files (`~/.aws/config`, `~/.kube/config`, etc.)
+5. Default values
 
-**System-Level Credential Detection**: AiSE automatically detects credentials from:
+**System-level credential auto-detection:**
 - AWS: `~/.aws/credentials`, `~/.aws/config`, `AWS_PROFILE`, IAM role
 - Kubernetes: `KUBECONFIG`, `~/.kube/config`
 - SSH: `~/.ssh/config`
 - Docker: `~/.docker/config.json`
 
-**CLI Configuration Commands**:
+**CLI configuration commands:**
 ```bash
-aise config show                    # Display current configuration (masked)
-aise config show --reveal           # Display with unmasked values
-aise config set LLM_PROVIDER openai # Set configuration value
-aise config get LLM_PROVIDER        # Get specific value
-aise config validate                # Test connectivity to all services
-aise config export                  # Export to .env format
-aise config import config.env       # Import from file
-aise config sources                 # Show configuration provenance
+aise config show                     # Display current config (values masked)
+aise config show --reveal            # Show unmasked values
+aise config set LLM_PROVIDER openai  # Update a value
+aise config get LLM_PROVIDER         # Read a specific value
+aise config validate                 # Test connectivity to all services
+aise config sources                  # Show where each value comes from
+aise config export > my.env          # Export to .env format
+aise config import my.env            # Import from file
 ```
 
-### Usage
+See [docs/configuration.md](docs/configuration.md) for the full reference.
 
-**Initialize documentation index** (first-time setup):
+## Usage
+
+### Ask a question
+
 ```bash
-aise init                                   # Index all pre-configured sources
-aise init --source aws                      # Index only AWS docs
-aise init --force                           # Re-index everything
-aise init --list                            # Show index status
+aise ask "Why is my pod crashlooping?"
+aise ask "How do I allow SSH in a security group?"
 ```
 
-**Ask a question**:
+### Learn from documentation
+
 ```bash
-aise ask "Why is my EC2 instance unreachable?"
+aise learn --list                              # Show available sources and status
+aise learn --enable aws                        # Learn from AWS docs
+aise learn --enable kubernetes                 # Learn from Kubernetes docs
+aise learn https://docs.example.com --source-name myapp
 ```
 
-**Learn from documentation**:
+### Manage tickets
+
 ```bash
-aise learn --list                           # Show available sources
-aise learn --enable aws                     # Learn from AWS docs
-aise learn https://docs.example.com --source-name custom
+aise ticket list                               # List open tickets
+aise ticket show TICKET-123                    # Show full ticket thread
 ```
 
-**Manage tickets**:
+### Operational modes
+
 ```bash
-aise ticket list                            # List open tickets
-aise ticket show TICKET-123                 # Show ticket details
+aise mode                                      # Show current mode
+aise mode set interactive                      # Only respond to direct commands
+aise mode set approval                         # Propose actions, wait for approval
+aise mode set autonomous                       # Act without human approval
 ```
 
-**Change operational mode**:
+### Daemon mode (process tickets continuously)
+
 ```bash
-aise mode                                   # Show current mode
-aise mode set approval                      # Set to approval mode
+aise start                                     # Start webhook server + ticket worker
 ```
-
-**Start daemon mode**:
-```bash
-aise start                                  # Run in background, process tickets
-```
-
-### Web Configuration UI
-
-Access the configuration interface at `http://localhost:8080/config` to:
-- Configure LLM providers with API key validation
-- Set up ticket system integrations with connectivity tests
-- Configure browser automation target URLs
-- Manage encrypted credentials
-- View system status and health
 
 ## Architecture
 
-AiSE uses a modular architecture with:
-- **LangGraph** for agent orchestration
-- **FastAPI** for webhooks and web UI
-- **PostgreSQL** for conversation memory and metadata
-- **Redis** for caching
-- **ChromaDB** for vector embeddings
-- **Playwright** for browser automation
+See [docs/architecture.md](docs/architecture.md) for a full description.
+
+| Component | Technology |
+|-----------|-----------|
+| Agent orchestration | LangGraph |
+| Web API / webhooks | FastAPI |
+| Conversation memory | PostgreSQL + Redis |
+| Vector embeddings | ChromaDB |
+| Browser automation | Playwright |
+| Metrics | Prometheus |
+| Tracing | OpenTelemetry + LangSmith |
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/configuration.md](docs/configuration.md) | All configuration options |
+| [docs/deployment.md](docs/deployment.md) | Docker Compose and production deployment |
+| [docs/api.md](docs/api.md) | CLI commands and webhook API reference |
+| [docs/architecture.md](docs/architecture.md) | System design and agent flow |
+| [docs/webhook_server.md](docs/webhook_server.md) | Webhook integration guide |
+| [docs/learn_command.md](docs/learn_command.md) | Documentation learning system |
+| [docs/logging.md](docs/logging.md) | Structured logging and observability |
 
 ## License
 
