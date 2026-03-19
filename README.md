@@ -27,7 +27,7 @@ Production-grade autonomous AI agent that acts as a senior cloud support enginee
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/LinxusInfoTech/OpenAiSE.git
 cd aise
 
 # Install dependencies with Poetry
@@ -166,4 +166,4 @@ See [docs/architecture.md](docs/architecture.md) for a full description.
 
 ## License
 
-[Your License Here]
+[[See License Here](https://github.com/LinxusInfoTech/OpenAiSE/blob/main/LICENSE)]
