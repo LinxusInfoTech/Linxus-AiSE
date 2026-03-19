@@ -209,6 +209,142 @@ install_playwright() {
     success "Playwright chromium installed."
 }
 
+# ── Interactive LLM setup ─────────────────────────────────────────────────────
+configure_llm() {
+    echo ""
+    echo -e "${CYAN}┌─────────────────────────────────────────┐${NC}"
+    echo -e "${CYAN}│         LLM Provider Setup              │${NC}"
+    echo -e "${CYAN}└─────────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e "  Select your LLM provider:"
+    echo -e "  ${CYAN}1)${NC} Anthropic Claude  (cloud, requires API key)"
+    echo -e "  ${CYAN}2)${NC} OpenAI GPT-4      (cloud, requires API key)"
+    echo -e "  ${CYAN}3)${NC} DeepSeek          (cloud, requires API key)"
+    echo -e "  ${CYAN}4)${NC} Ollama            (local, no API key needed)"
+    echo ""
+
+    local choice
+    while true; do
+        read -rp "  Enter choice [1-4]: " choice
+        case "$choice" in
+            1|2|3|4) break ;;
+            *) echo -e "  ${RED}Invalid choice.${NC} Please enter 1, 2, 3, or 4." ;;
+        esac
+    done
+
+    case "$choice" in
+        1)
+            set_env_var "LLM_PROVIDER" "anthropic"
+            echo ""
+            echo -e "  Get your API key from: ${CYAN}https://console.anthropic.com/${NC}"
+            local api_key
+            while true; do
+                read -rsp "  Enter Anthropic API key: " api_key; echo ""
+                [ -n "$api_key" ] && break
+                warn "API key cannot be empty."
+            done
+            set_env_var "ANTHROPIC_API_KEY" "$api_key"
+            success "Anthropic Claude configured."
+            ;;
+        2)
+            set_env_var "LLM_PROVIDER" "openai"
+            echo ""
+            echo -e "  Get your API key from: ${CYAN}https://platform.openai.com/api-keys${NC}"
+            local api_key
+            while true; do
+                read -rsp "  Enter OpenAI API key: " api_key; echo ""
+                [ -n "$api_key" ] && break
+                warn "API key cannot be empty."
+            done
+            set_env_var "OPENAI_API_KEY" "$api_key"
+            success "OpenAI GPT-4 configured."
+            ;;
+        3)
+            set_env_var "LLM_PROVIDER" "deepseek"
+            echo ""
+            echo -e "  Get your API key from: ${CYAN}https://platform.deepseek.com/${NC}"
+            local api_key
+            while true; do
+                read -rsp "  Enter DeepSeek API key: " api_key; echo ""
+                [ -n "$api_key" ] && break
+                warn "API key cannot be empty."
+            done
+            set_env_var "DEEPSEEK_API_KEY" "$api_key"
+            success "DeepSeek configured."
+            ;;
+        4)
+            set_env_var "LLM_PROVIDER" "ollama"
+            install_ollama
+            configure_ollama_model
+            ;;
+    esac
+}
+
+install_ollama() {
+    if command -v ollama &>/dev/null; then
+        success "Ollama already installed: $(ollama --version 2>/dev/null || echo 'installed')"
+        return
+    fi
+
+    info "Installing Ollama..."
+    curl -fsSL https://ollama.com/install.sh | sh
+    # Start ollama service
+    if systemctl is-active --quiet ollama 2>/dev/null; then
+        success "Ollama service already running."
+    else
+        $SUDO systemctl enable --now ollama 2>/dev/null || ollama serve &>/dev/null &
+        sleep 3
+    fi
+    success "Ollama installed."
+}
+
+configure_ollama_model() {
+    echo ""
+    echo -e "  Select an Ollama model to pull and use:"
+    echo -e "  ${CYAN}1)${NC} llama3        (~4.7 GB) — Meta Llama 3 8B, good general purpose"
+    echo -e "  ${CYAN}2)${NC} mistral       (~4.1 GB) — Mistral 7B, fast and capable"
+    echo -e "  ${CYAN}3)${NC} codellama     (~3.8 GB) — Code-focused, good for infra tasks"
+    echo -e "  ${CYAN}4)${NC} llama3:70b    (~40 GB)  — Llama 3 70B, best quality (needs 64GB+ RAM)"
+    echo -e "  ${CYAN}5)${NC} Custom        — Enter your own model name"
+    echo ""
+
+    local model_choice
+    while true; do
+        read -rp "  Enter choice [1-5]: " model_choice
+        case "$model_choice" in
+            1|2|3|4|5) break ;;
+            *) echo -e "  ${RED}Invalid choice.${NC}" ;;
+        esac
+    done
+
+    local model_name
+    case "$model_choice" in
+        1) model_name="llama3" ;;
+        2) model_name="mistral" ;;
+        3) model_name="codellama" ;;
+        4) model_name="llama3:70b" ;;
+        5)
+            while true; do
+                read -rp "  Enter model name (e.g. phi3, gemma2): " model_name
+                [ -n "$model_name" ] && break
+                warn "Model name cannot be empty."
+            done
+            ;;
+    esac
+
+    # Ask for Ollama base URL (default localhost)
+    local ollama_url
+    read -rp "  Ollama base URL [http://localhost:11434]: " ollama_url
+    ollama_url="${ollama_url:-http://localhost:11434}"
+
+    set_env_var "OLLAMA_BASE_URL" "$ollama_url"
+    set_env_var "OLLAMA_MODEL"    "$model_name"
+
+    info "Pulling Ollama model '${model_name}' (this may take a while)..."
+    ollama pull "$model_name" || warn "Could not pull model now. Run 'ollama pull ${model_name}' manually."
+    success "Ollama configured with model: ${model_name}"
+}
+
 # ── Start infrastructure services ────────────────────────────────────────────
 start_services() {
     info "Starting infrastructure services (postgres, redis, chromadb)..."
@@ -268,6 +404,7 @@ main() {
     install_docker
     install_poetry
     setup_env
+    configure_llm
     sync_docker_compose
     install_python_deps
     install_playwright
@@ -277,13 +414,8 @@ main() {
     echo ""
     success "Installation complete."
     echo ""
-    echo -e "  Generated credentials have been written to ${YELLOW}.env${NC} and ${YELLOW}docker-compose.yml${NC}."
-    echo ""
-    echo -e "  ${YELLOW}Required:${NC} Edit ${YELLOW}.env${NC} and set your LLM provider API key:"
-    echo -e "    ${CYAN}ANTHROPIC_API_KEY${NC}  or  ${CYAN}OPENAI_API_KEY${NC}  or  ${CYAN}DEEPSEEK_API_KEY${NC}"
-    echo ""
-    echo -e "  Then run:"
-    echo -e "    ${CYAN}poetry run aise ask \"Why is my EC2 instance unreachable?\"${NC}"
+    echo -e "  Credentials written to ${YELLOW}.env${NC} and ${YELLOW}docker-compose.yml${NC}."
+    echo -e "  Run: ${CYAN}poetry run aise ask \"Why is my EC2 instance unreachable?\"${NC}"
     echo ""
 }
 
