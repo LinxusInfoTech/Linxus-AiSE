@@ -780,6 +780,182 @@ def get(
 
 
 @config_app.command()
+def provider(
+    name: str = typer.Argument(
+        None,
+        help="Provider to switch to: anthropic, openai, deepseek, ollama"
+    ),
+    api_key: str = typer.Option(None, "--api-key", "-k", help="API key for the provider"),
+    model: str = typer.Option(None, "--model", "-m", help="Model name (Ollama only)"),
+    ollama_url: str = typer.Option(None, "--ollama-url", help="Ollama base URL (default: http://localhost:11434)"),
+    list_providers: bool = typer.Option(False, "--list", "-l", help="List configured providers and their status"),
+):
+    """Switch LLM provider or update API keys.
+
+    Shows current provider status, or switches to a different provider.
+    API keys are written to .env and applied immediately — no restart needed.
+
+    Examples:
+        aise config provider --list
+        aise config provider anthropic --api-key sk-ant-...
+        aise config provider openai --api-key sk-...
+        aise config provider deepseek --api-key ds-...
+        aise config provider ollama --model phi3
+        aise config provider ollama --model llama3 --ollama-url http://localhost:11434
+    """
+    import os
+    from pathlib import Path
+
+    PROVIDERS = {
+        "anthropic": {
+            "key_var": "ANTHROPIC_API_KEY",
+            "label": "Anthropic Claude",
+            "url": "https://console.anthropic.com/",
+            "needs_key": True,
+        },
+        "openai": {
+            "key_var": "OPENAI_API_KEY",
+            "label": "OpenAI GPT-4",
+            "url": "https://platform.openai.com/api-keys",
+            "needs_key": True,
+        },
+        "deepseek": {
+            "key_var": "DEEPSEEK_API_KEY",
+            "label": "DeepSeek",
+            "url": "https://platform.deepseek.com/",
+            "needs_key": True,
+        },
+        "ollama": {
+            "key_var": None,
+            "label": "Ollama (local)",
+            "url": None,
+            "needs_key": False,
+        },
+    }
+
+    def _read_env() -> dict:
+        env = {}
+        env_path = Path(".env")
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    env[k.strip()] = v.strip()
+        return env
+
+    def _write_env_var(key: str, value: str):
+        """Update or append a key in .env."""
+        env_path = Path(".env")
+        if env_path.exists():
+            lines = env_path.read_text().splitlines()
+            updated = False
+            new_lines = []
+            for line in lines:
+                if line.strip().startswith(f"{key}=") or line.strip() == key:
+                    new_lines.append(f"{key}={value}")
+                    updated = True
+                else:
+                    new_lines.append(line)
+            if not updated:
+                new_lines.append(f"{key}={value}")
+            env_path.write_text("\n".join(new_lines) + "\n")
+        else:
+            with open(".env", "a") as f:
+                f.write(f"{key}={value}\n")
+        # Also apply to current process
+        os.environ[key] = value
+
+    # ── List mode ──────────────────────────────────────────────────────────
+    if list_providers or name is None:
+        env = _read_env()
+        current = env.get("LLM_PROVIDER", os.environ.get("LLM_PROVIDER", "not set"))
+
+        table = Table(
+            title="LLM Providers",
+            box=box.ROUNDED,
+            show_header=True,
+            header_style="bold cyan"
+        )
+        table.add_column("Provider", style="white", no_wrap=True)
+        table.add_column("Label", style="white")
+        table.add_column("Key Configured", justify="center")
+        table.add_column("Active", justify="center")
+
+        for pname, pinfo in PROVIDERS.items():
+            key_var = pinfo["key_var"]
+            if pname == "ollama":
+                key_status = "[dim]n/a[/dim]"
+                ollama_model = env.get("OLLAMA_MODEL", os.environ.get("OLLAMA_MODEL", ""))
+                label = f"{pinfo['label']}" + (f" ({ollama_model})" if ollama_model else "")
+            else:
+                has_key = bool(env.get(key_var) or os.environ.get(key_var, ""))
+                key_status = "[green]✓[/green]" if has_key else "[red]✗[/red]"
+                label = pinfo["label"]
+
+            active = "[bold green]● active[/bold green]" if pname == current else ""
+            table.add_row(pname, label, key_status, active)
+
+        console.print()
+        console.print(table)
+        console.print(f"\n[dim]Current provider:[/dim] [bold cyan]{current}[/bold cyan]")
+        console.print("\n[dim]Switch with:[/dim] aise config provider <name> [--api-key <key>]")
+        console.print("[dim]Update key:  [/dim] aise config provider <name> --api-key <new-key>")
+        console.print()
+        return
+
+    # ── Switch / update mode ───────────────────────────────────────────────
+    name = name.lower()
+    if name not in PROVIDERS:
+        console.print(f"[red]Unknown provider '{name}'. Choose from: {', '.join(PROVIDERS)}[/red]")
+        raise typer.Exit(1)
+
+    pinfo = PROVIDERS[name]
+
+    # Handle Ollama
+    if name == "ollama":
+        url = ollama_url or "http://localhost:11434"
+        mdl = model or "phi3"
+        _write_env_var("LLM_PROVIDER", "ollama")
+        _write_env_var("OLLAMA_BASE_URL", url)
+        _write_env_var("OLLAMA_MODEL", mdl)
+        console.print(f"\n[green]✓[/green] Switched to Ollama")
+        console.print(f"  Model : [cyan]{mdl}[/cyan]")
+        console.print(f"  URL   : [cyan]{url}[/cyan]")
+        console.print(f"\n[dim]Pull the model if you haven't already:[/dim]  ollama pull {mdl}")
+        console.print("[dim]Make sure Ollama is running:[/dim]            ollama serve\n")
+        return
+
+    # Cloud providers — need an API key
+    key_var = pinfo["key_var"]
+    existing_key = _read_env().get(key_var) or os.environ.get(key_var, "")
+
+    if api_key:
+        new_key = api_key
+    elif existing_key:
+        # Key already set — just switch the active provider
+        new_key = existing_key
+        console.print(f"[dim]Using existing {key_var}[/dim]")
+    else:
+        # Prompt interactively
+        console.print(f"\n[cyan]Get your API key from:[/cyan] {pinfo['url']}")
+        new_key = typer.prompt(f"  Enter {pinfo['label']} API key", hide_input=True)
+        if not new_key.strip():
+            console.print("[red]API key cannot be empty.[/red]")
+            raise typer.Exit(1)
+        new_key = new_key.strip()
+
+    _write_env_var(key_var, new_key)
+    _write_env_var("LLM_PROVIDER", name)
+
+    # Mask key for display
+    masked = new_key[:4] + "****" + new_key[-4:] if len(new_key) > 8 else "****"
+    console.print(f"\n[green]✓[/green] Switched to [bold]{pinfo['label']}[/bold]")
+    console.print(f"  {key_var}: [dim]{masked}[/dim]")
+    console.print("[dim]Change applied — no restart needed.\n[/dim]")
+
+
+@config_app.command()
 def set(
     key: str = typer.Argument(..., help="Configuration key to set"),
     value: str = typer.Argument(..., help="New value for the configuration key")

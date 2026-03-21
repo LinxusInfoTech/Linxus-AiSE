@@ -201,6 +201,30 @@ install_python_deps() {
     success "Python dependencies installed."
 }
 
+# ── Expose aise on system PATH ────────────────────────────────────────────────
+install_aise_command() {
+    info "Installing 'aise' command to /usr/local/bin..."
+    export PATH="${HOME}/.local/bin:${PATH}"
+
+    # Get the path to the aise binary inside the Poetry venv
+    AISE_BIN="$(poetry env info --path)/bin/aise"
+
+    if [ ! -f "$AISE_BIN" ]; then
+        error "Could not find aise binary at ${AISE_BIN}. Did 'poetry install' succeed?"
+    fi
+
+    # Create a wrapper script so the venv Python is always used
+    $SUDO tee /usr/local/bin/aise > /dev/null <<EOF
+#!/usr/bin/env bash
+# AiSE wrapper — runs inside its Poetry virtualenv
+exec "${AISE_BIN}" "\$@"
+EOF
+    $SUDO chmod +x /usr/local/bin/aise
+
+    success "'aise' command installed at /usr/local/bin/aise"
+    info "Test it with: aise --help"
+}
+
 # ── Playwright browsers ───────────────────────────────────────────────────────
 install_playwright() {
     info "Installing Playwright chromium browser..."
@@ -301,31 +325,34 @@ install_ollama() {
 configure_ollama_model() {
     echo ""
     echo -e "  Select an Ollama model to pull and use:"
-    echo -e "  ${CYAN}1)${NC} llama3        (~4.7 GB) — Meta Llama 3 8B, good general purpose"
-    echo -e "  ${CYAN}2)${NC} mistral       (~4.1 GB) — Mistral 7B, fast and capable"
-    echo -e "  ${CYAN}3)${NC} codellama     (~3.8 GB) — Code-focused, good for infra tasks"
-    echo -e "  ${CYAN}4)${NC} llama3:70b    (~40 GB)  — Llama 3 70B, best quality (needs 64GB+ RAM)"
-    echo -e "  ${CYAN}5)${NC} Custom        — Enter your own model name"
+    echo -e "  ${CYAN}1)${NC} phi3          (~2.3 GB) — Microsoft Phi-3 Mini, fast & efficient  [recommended]"
+    echo -e "  ${CYAN}2)${NC} llama3        (~4.7 GB) — Meta Llama 3 8B, good general purpose"
+    echo -e "  ${CYAN}3)${NC} mistral       (~4.1 GB) — Mistral 7B, fast and capable"
+    echo -e "  ${CYAN}4)${NC} codellama     (~3.8 GB) — Code-focused, good for infra tasks"
+    echo -e "  ${CYAN}5)${NC} llama3:70b    (~40 GB)  — Llama 3 70B, best quality (needs 64GB+ RAM)"
+    echo -e "  ${CYAN}6)${NC} Custom        — Enter your own model name"
     echo ""
 
     local model_choice
     while true; do
-        read -rp "  Enter choice [1-5]: " model_choice
+        read -rp "  Enter choice [1-6, default=1]: " model_choice
+        model_choice="${model_choice:-1}"
         case "$model_choice" in
-            1|2|3|4|5) break ;;
+            1|2|3|4|5|6) break ;;
             *) echo -e "  ${RED}Invalid choice.${NC}" ;;
         esac
     done
 
     local model_name
     case "$model_choice" in
-        1) model_name="llama3" ;;
-        2) model_name="mistral" ;;
-        3) model_name="codellama" ;;
-        4) model_name="llama3:70b" ;;
-        5)
+        1) model_name="phi3" ;;
+        2) model_name="llama3" ;;
+        3) model_name="mistral" ;;
+        4) model_name="codellama" ;;
+        5) model_name="llama3:70b" ;;
+        6)
             while true; do
-                read -rp "  Enter model name (e.g. phi3, gemma2): " model_name
+                read -rp "  Enter model name (e.g. gemma2, qwen2): " model_name
                 [ -n "$model_name" ] && break
                 warn "Model name cannot be empty."
             done
@@ -420,15 +447,31 @@ main() {
     configure_llm
     sync_docker_compose
     install_python_deps
+    install_aise_command
     install_playwright
     start_services
     verify_services
 
+    # Determine which model is configured for the summary
+    CONFIGURED_PROVIDER=$(grep -oP '(?<=LLM_PROVIDER=)\S+' .env | head -1 || echo "unknown")
+    CONFIGURED_MODEL=$(grep -oP '(?<=OLLAMA_MODEL=)\S+' .env | head -1 || echo "")
+
     echo ""
     success "Installation complete."
     echo ""
-    echo -e "  Credentials written to ${YELLOW}.env${NC} and ${YELLOW}docker-compose.yml${NC}."
-    echo -e "  Run: ${CYAN}poetry run aise ask \"Why is my EC2 instance unreachable?\"${NC}"
+    echo -e "  ${CYAN}aise${NC} is now available as a system command."
+    echo ""
+    echo -e "  Provider : ${YELLOW}${CONFIGURED_PROVIDER}${NC}"
+    [ -n "$CONFIGURED_MODEL" ] && echo -e "  Model    : ${YELLOW}${CONFIGURED_MODEL}${NC}"
+    echo ""
+    echo -e "  Quick start:"
+    echo -e "    ${CYAN}aise ask \"Why is my EC2 instance unreachable?\"${NC}"
+    echo -e "    ${CYAN}aise learn list${NC}"
+    echo -e "    ${CYAN}aise learn enable kubernetes${NC}"
+    echo -e "    ${CYAN}aise --help${NC}"
+    echo ""
+    [ "$CONFIGURED_PROVIDER" = "ollama" ] && \
+        echo -e "  Ollama tip: if the service isn't running, start it with ${CYAN}ollama serve${NC}"
     echo ""
 }
 
