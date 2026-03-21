@@ -109,6 +109,28 @@ class DocumentationRegistry:
             ),
 
             DocumentationSource(
+                name="aws-linux",
+                display_name="AWS Linux Documentation",
+                url="https://docs.aws.amazon.com/linux/",
+                description="Official AWS Linux documentation for Amazon Linux instances",
+                category=SourceCategory.CLOUD_PROVIDER,
+                estimated_size_mb=50,
+                estimated_pages=500,
+                recommended=True,
+                metadata={"provider": "amazon", "topics": ["amazon-linux", "al2", "al2023"]}
+            ),
+            DocumentationSource(
+                name="ubuntu",
+                display_name="Ubuntu Documentation",
+                url="https://help.ubuntu.com/",
+                description="Official Ubuntu help and documentation",
+                category=SourceCategory.OTHER,
+                estimated_size_mb=80,
+                estimated_pages=1000,
+                recommended=True,
+                metadata={"topics": ["installation", "server", "desktop", "packages"]}
+            ),
+            DocumentationSource(
                 name="azure",
                 display_name="Microsoft Azure",
                 url="https://learn.microsoft.com/en-us/azure/",
@@ -378,12 +400,14 @@ def get_registry() -> DocumentationRegistry:
 # Simple list format for compatibility with init_runner
 REGISTERED_SOURCES: List[Dict[str, str]] = [
     {"name": "aws", "url": "https://docs.aws.amazon.com/"},
+    {"name": "aws-linux", "url": "https://docs.aws.amazon.com/linux/"},
     {"name": "azure", "url": "https://learn.microsoft.com/en-us/azure/"},
-    {"name": "gcp", "url": "https://cloud.google.com/docs"},
+    {"name": "ubuntu", "url": "https://help.ubuntu.com/"},
+    {"name": "git", "url": "https://git-scm.com/doc"},
     {"name": "kubernetes", "url": "https://kubernetes.io/docs/"},
+    {"name": "gcp", "url": "https://cloud.google.com/docs"},
     {"name": "docker", "url": "https://docs.docker.com/"},
     {"name": "terraform", "url": "https://developer.hashicorp.com/terraform/docs"},
-    {"name": "git", "url": "https://git-scm.com/doc"},
     {"name": "ibm-cloud", "url": "https://cloud.ibm.com/docs"},
     {"name": "oracle", "url": "https://docs.oracle.com/en-us/iaas"},
 ]

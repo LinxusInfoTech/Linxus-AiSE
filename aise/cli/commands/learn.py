@@ -27,7 +27,7 @@ from aise.knowledge_engine.chunker import TextChunker
 from aise.knowledge_engine.embedder import OpenAIEmbedder, LocalEmbedder
 from aise.knowledge_engine.vector_store import ChromaDBVectorStore
 from aise.knowledge_engine.metadata_store import MetadataStore
-from aise.core.config import get_config
+from aise.core.config import get_config, load_config
 from aise.core.exceptions import KnowledgeEngineError
 
 logger = structlog.get_logger(__name__)
@@ -58,7 +58,7 @@ async def _list_async():
             return
         
         # Initialize metadata store to get status
-        config = get_config()
+        config = load_config()
         metadata_store = MetadataStore(config)
         await metadata_store.initialize()
         
@@ -172,7 +172,7 @@ async def _learn_url_async(url: str, source_name: str):
     """Async implementation of learn URL command."""
     try:
         # Load configuration
-        config = get_config()
+        config = load_config()
         
         # Display start message
         console.print(Panel(

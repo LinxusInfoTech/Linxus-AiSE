@@ -215,10 +215,9 @@ class ContentExtractor:
         # Convert to Markdown
         markdown = md(
             html_str,
-            heading_style="ATX",  # Use # for headings
-            bullets="-",  # Use - for bullet lists
-            strip=["script", "style"],
-            convert=["a"] if self.convert_links else [],
+            heading_style="ATX",
+            bullets="-",
+            strip=["script", "style", "nav", "footer", "header"] if not self.convert_links else ["script", "style", "nav", "footer", "header"],
             escape_asterisks=False,
             escape_underscores=False
         )

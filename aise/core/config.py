@@ -64,6 +64,11 @@ class Config(BaseSettings):
         description="Ollama base URL for local LLM inference"
     )
     
+    OLLAMA_MODEL: str = Field(
+        default="llama3",
+        description="Ollama model name to use for inference"
+    )
+    
     # -------------------------------------------------------------------------
     # Operational Mode
     # -------------------------------------------------------------------------

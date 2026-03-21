@@ -43,7 +43,7 @@ class OllamaProvider(LLMProvider):
         super().__init__(config)
         
         self._base_url = getattr(config, "OLLAMA_BASE_URL", "http://localhost:11434")
-        self._default_model = getattr(config, "OLLAMA_MODEL", "llama2")
+        self._default_model = getattr(config, "OLLAMA_MODEL", "llama3")
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=120.0  # Longer timeout for local inference

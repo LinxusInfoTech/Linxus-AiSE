@@ -150,12 +150,13 @@ class LLMRouter:
             except Exception as e:
                 logger.warning("provider_init_failed", provider="deepseek", error=str(e))
         
-        # Ollama (always try to initialize, no API key needed)
-        try:
-            self._providers["ollama"] = OllamaProvider(self._config)
-            logger.info("provider_initialized", provider="ollama")
-        except Exception as e:
-            logger.warning("provider_init_failed", provider="ollama", error=str(e))
+        # Ollama (only initialize if base URL is explicitly configured)
+        if getattr(self._config, 'OLLAMA_BASE_URL', None):
+            try:
+                self._providers["ollama"] = OllamaProvider(self._config)
+                logger.info("provider_initialized", provider="ollama")
+            except Exception as e:
+                logger.warning("provider_init_failed", provider="ollama", error=str(e))
         
         if not self._providers:
             raise ProviderError(

@@ -70,7 +70,7 @@ class OpenAIProvider(LLMProvider):
             )
         
         self._client = openai.AsyncOpenAI(api_key=config.OPENAI_API_KEY)
-        self._default_model = getattr(config, "OPENAI_MODEL", "gpt-4-turbo-preview")
+        self._default_model = getattr(config, "OPENAI_MODEL", "gpt-4o")
         
         logger.info(
             "openai_provider_initialized",

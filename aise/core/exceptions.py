@@ -310,12 +310,15 @@ class KnowledgeEngineError(AiSEException):
         operation: The operation that failed (e.g., "initialization", "crawl", "embed")
     """
     
-    def __init__(self, message: str, operation: str = None):
+    def __init__(self, message: str, operation: str = None, field: str = None):
         context = {}
         if operation:
             context['operation'] = operation
+        if field:
+            context['field'] = field
         super().__init__(message, context)
         self.operation = operation
+        self.field = field
 
 
 # Browser Automation Exceptions

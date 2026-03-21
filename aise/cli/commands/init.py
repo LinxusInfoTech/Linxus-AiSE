@@ -25,7 +25,7 @@ import asyncio
 from aise.knowledge_engine.sources import REGISTERED_SOURCES, get_source
 from aise.knowledge_engine.init_runner import InitRunner
 from aise.knowledge_engine.vector_store import ChromaDBVectorStore
-from aise.core.config import get_config
+from aise.core.config import get_config, load_config
 from aise.core.exceptions import KnowledgeEngineError
 
 logger = structlog.get_logger(__name__)
@@ -34,8 +34,7 @@ console = Console()
 # Create init subcommand app
 init_app = typer.Typer(
     name="init",
-    help="Documentation indexing commands",
-    no_args_is_help=True
+    help="Documentation indexing commands"
 )
 
 
@@ -56,7 +55,7 @@ async def _run_init(force: bool = False, source: Optional[str] = None):
     """Async implementation of init run."""
     try:
         # Load config
-        config = get_config()
+        config = load_config()
         
         # Initialize vector store
         vector_store = ChromaDBVectorStore(config)
@@ -127,7 +126,7 @@ async def _list_sources():
     """Async implementation of list command."""
     try:
         # Load config
-        config = get_config()
+        config = load_config()
         
         # Initialize vector store
         vector_store = ChromaDBVectorStore(config)
@@ -211,7 +210,7 @@ async def _clear_index():
             return
         
         # Load config
-        config = get_config()
+        config = load_config()
         
         # Initialize vector store
         vector_store = ChromaDBVectorStore(config)

@@ -141,7 +141,7 @@ async def _ask_question(question: str, stream: bool, mode: str):
             
             diagnosis_text = ""
             async for token in engineer_agent.stream_diagnose(state):
-                console.print(token, end="", flush=True)
+                console.print(token, end="")
                 diagnosis_text += token
             
             console.print("\n")
