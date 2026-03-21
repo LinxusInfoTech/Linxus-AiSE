@@ -128,6 +128,8 @@ class MetadataStore:
             )
         
         try:
+            import json
+            metadata_json = json.dumps(metadata) if metadata is not None else None
             async with self._pool.acquire() as conn:
                 record_id = await conn.fetchval("""
                     INSERT INTO documentation_metadata 
@@ -136,7 +138,7 @@ class MetadataStore:
                     VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7)
                     RETURNING id
                 """, source_name, source_url, chunk_count, total_tokens, 
-                    status, error_message, metadata)
+                    status, error_message, metadata_json)
             
             logger.info(
                 "crawl_metadata_stored",
