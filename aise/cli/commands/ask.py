@@ -22,8 +22,9 @@ from aise.agents.engineer_agent import EngineerAgent
 from aise.agents.knowledge_agent import KnowledgeAgent
 from aise.ai_engine.router import LLMRouter
 from aise.knowledge_engine.vector_store import ChromaDBVectorStore
-from aise.core.config import get_config
+from aise.core.config import get_config, load_config
 from aise.core.exceptions import ProviderError, AuthenticationError
+from aise.knowledge_engine.embedder import LocalEmbedder, OpenAIEmbedder
 from aise.cli.output import (
     print_diagnosis,
     print_error,
@@ -67,7 +68,7 @@ async def _ask_question(question: str, stream: bool, mode: str):
     """
     try:
         # Load configuration
-        config = get_config()
+        config = load_config()
         
         # Initialize components
         console.print("\n[dim]Initializing...[/dim]")
@@ -92,9 +93,17 @@ async def _ask_question(question: str, stream: bool, mode: str):
         vector_store = ChromaDBVectorStore(config)
         await vector_store.initialize()
         
+        # Initialize embedder based on provider
+        if config.LLM_PROVIDER == "openai" and config.OPENAI_API_KEY:
+            embedder = OpenAIEmbedder(api_key=config.OPENAI_API_KEY)
+        else:
+            embedder = LocalEmbedder(
+                model_name=getattr(config, 'LOCAL_EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
+            )
+        
         # Initialize agents
         engineer_agent = EngineerAgent(llm_router)
-        knowledge_agent = KnowledgeAgent(vector_store)
+        knowledge_agent = KnowledgeAgent(vector_store, embedder)
         
         # Create initial state
         state = create_initial_state(

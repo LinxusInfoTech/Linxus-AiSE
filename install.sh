@@ -164,9 +164,9 @@ setup_env() {
         fi
     }
 
-    set_env_var "POSTGRES_URL"    "postgresql://aise:${POSTGRES_PASS}@localhost:5432/aise"
-    set_env_var "DATABASE_URL"    "postgresql://aise:${POSTGRES_PASS}@localhost:5432/aise"
-    set_env_var "REDIS_URL"       "redis://:${REDIS_PASS}@localhost:6379/0"
+    set_env_var "POSTGRES_URL"    "postgresql://aise:${POSTGRES_PASS}@localhost:5434/aise"
+    set_env_var "DATABASE_URL"    "postgresql://aise:${POSTGRES_PASS}@localhost:5434/aise"
+    set_env_var "REDIS_URL"       "redis://:${REDIS_PASS}@localhost:6380/0"
     set_env_var "CREDENTIAL_VAULT_KEY" "${VAULT_KEY}"
     set_env_var "WEBHOOK_SECRET"  "${WEBHOOK_SECRET}"
     set_env_var "CHROMA_HOST"     "localhost"
@@ -345,14 +345,26 @@ configure_ollama_model() {
     success "Ollama configured with model: ${model_name}"
 }
 
+# ── Detect docker compose command (v2 plugin or v1 standalone) ───────────────
+detect_docker_compose() {
+    if docker compose version &>/dev/null 2>&1; then
+        DOCKER_COMPOSE="docker compose"
+    elif command -v docker-compose &>/dev/null; then
+        DOCKER_COMPOSE="docker-compose"
+    else
+        error "Neither 'docker compose' (v2) nor 'docker-compose' (v1) found. Please install Docker Compose."
+    fi
+    info "Using compose command: ${DOCKER_COMPOSE}"
+}
+
 # ── Start infrastructure services ────────────────────────────────────────────
 start_services() {
     info "Starting infrastructure services (postgres, redis, chromadb)..."
-    docker compose up -d postgres redis chromadb
+    $DOCKER_COMPOSE up -d postgres redis chromadb
     info "Waiting for services to become healthy..."
     local retries=30
     while [ $retries -gt 0 ]; do
-        if docker compose ps | grep -E "postgres|redis|chromadb" | grep -qv "healthy\|running"; then
+        if $DOCKER_COMPOSE ps | grep -E "postgres|redis|chromadb" | grep -qv "healthy\|running"; then
             sleep 2
             retries=$((retries - 1))
         else
@@ -369,21 +381,21 @@ verify_services() {
     info "Verifying service connectivity..."
 
     # PostgreSQL
-    if docker compose exec -T postgres pg_isready -U aise -d aise &>/dev/null; then
+    if $DOCKER_COMPOSE exec -T postgres pg_isready -U aise -d aise &>/dev/null; then
         success "PostgreSQL: reachable"
     else
         warn "PostgreSQL: not yet ready (may still be initializing)"
     fi
 
     # Redis
-    if docker compose exec -T redis redis-cli -a "${REDIS_PASS}" ping 2>/dev/null | grep -q PONG; then
+    if $DOCKER_COMPOSE exec -T redis redis-cli -a "${REDIS_PASS}" ping 2>/dev/null | grep -q PONG; then
         success "Redis: reachable"
     else
         warn "Redis: not yet ready"
     fi
 
     # ChromaDB
-    if curl -sf http://localhost:8000/api/v1/heartbeat &>/dev/null; then
+    if curl -sf http://localhost:8000/api/v2/heartbeat &>/dev/null; then
         success "ChromaDB: reachable"
     else
         warn "ChromaDB: not yet ready"
@@ -402,6 +414,7 @@ main() {
     check_root
     install_system_deps
     install_docker
+    detect_docker_compose
     install_poetry
     setup_env
     configure_llm

@@ -30,7 +30,7 @@ rich = "^13.7.0"
 # Database
 asyncpg = "^0.29.0"
 redis = {extras = ["hiredis"], version = "^5.0.0"}
-chromadb = "^0.5.0"
+chromadb = ">=1.0.0"
 
 # Ticket Systems
 zenpy = "^2.0.0"
