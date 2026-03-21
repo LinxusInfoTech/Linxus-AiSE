@@ -60,14 +60,63 @@ install_system_deps() {
 
     info "Installing system dependencies..."
     if [ "$PKG_FAMILY" = "debian" ]; then
+        # Detect Ubuntu/Debian version to handle package name differences
+        OS_VERSION_ID="${VERSION_ID:-}"
+        OS_CODENAME="${VERSION_CODENAME:-$(lsb_release -cs 2>/dev/null || echo '')}"
+
+        # Install base packages first
         $SUDO $PKG_INSTALL \
             curl wget git ca-certificates gnupg lsb-release \
             build-essential libssl-dev libffi-dev \
-            python3.11 python3.11-dev python3.11-venv python3-pip \
-            postgresql-client redis-tools \
-            libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-            libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
-            libxrandr2 libgbm1 libasound2
+            python3-pip
+
+        # Python 3.11 — available natively on Ubuntu 22.04/Debian 12+
+        # On Ubuntu 24.04+ python3.11 may need deadsnakes PPA
+        if apt-cache show python3.11 &>/dev/null 2>&1; then
+            $SUDO $PKG_INSTALL python3.11 python3.11-dev python3.11-venv
+        else
+            info "python3.11 not in default repos — adding deadsnakes PPA..."
+            $SUDO $PKG_INSTALL software-properties-common
+            $SUDO add-apt-repository -y ppa:deadsnakes/ppa
+            $SUDO apt-get update -qq
+            $SUDO $PKG_INSTALL python3.11 python3.11-dev python3.11-venv
+        fi
+
+        # PostgreSQL client
+        $SUDO $PKG_INSTALL postgresql-client redis-tools 2>/dev/null || \
+            $SUDO $PKG_INSTALL postgresql-client 2>/dev/null || true
+
+        # Playwright / browser dependencies — package names changed in Ubuntu 24.04
+        PLAYWRIGHT_PKGS="libnss3 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1"
+
+        # libatk renamed in Ubuntu 24.04
+        if apt-cache show libatk1.0-0 2>/dev/null | grep -q "^Package:"; then
+            PLAYWRIGHT_PKGS="$PLAYWRIGHT_PKGS libatk1.0-0"
+        elif apt-cache show libatk1.0-0t64 2>/dev/null | grep -q "^Package:"; then
+            PLAYWRIGHT_PKGS="$PLAYWRIGHT_PKGS libatk1.0-0t64"
+        fi
+        if apt-cache show libatk-bridge2.0-0 2>/dev/null | grep -q "^Package:"; then
+            PLAYWRIGHT_PKGS="$PLAYWRIGHT_PKGS libatk-bridge2.0-0"
+        elif apt-cache show libatk-bridge2.0-0t64 2>/dev/null | grep -q "^Package:"; then
+            PLAYWRIGHT_PKGS="$PLAYWRIGHT_PKGS libatk-bridge2.0-0t64"
+        fi
+
+        # libcups2 renamed in Ubuntu 24.04
+        if apt-cache show libcups2 2>/dev/null | grep -q "^Package:"; then
+            PLAYWRIGHT_PKGS="$PLAYWRIGHT_PKGS libcups2"
+        elif apt-cache show libcups2t64 2>/dev/null | grep -q "^Package:"; then
+            PLAYWRIGHT_PKGS="$PLAYWRIGHT_PKGS libcups2t64"
+        fi
+
+        # libasound2 renamed in Ubuntu 24.04 (virtual package — must pick concrete one)
+        if apt-cache show libasound2t64 2>/dev/null | grep -q "^Package:"; then
+            PLAYWRIGHT_PKGS="$PLAYWRIGHT_PKGS libasound2t64"
+        elif apt-cache show liboss4-salsa-asound2 2>/dev/null | grep -q "^Package:"; then
+            PLAYWRIGHT_PKGS="$PLAYWRIGHT_PKGS liboss4-salsa-asound2"
+        fi
+
+        # shellcheck disable=SC2086
+        $SUDO $PKG_INSTALL $PLAYWRIGHT_PKGS
     else
         if echo "${OS_ID}" | grep -qiE "centos|rhel|rocky|almalinux|ol"; then
             $SUDO $PKG_INSTALL epel-release 2>/dev/null || true
@@ -376,30 +425,116 @@ configure_ollama_model() {
 detect_docker_compose() {
     if docker compose version &>/dev/null 2>&1; then
         DOCKER_COMPOSE="docker compose"
-    elif command -v docker-compose &>/dev/null; then
-        DOCKER_COMPOSE="docker-compose"
-    else
-        error "Neither 'docker compose' (v2) nor 'docker-compose' (v1) found. Please install Docker Compose."
+        info "Using compose command: docker compose (v2)"
+        return
     fi
-    info "Using compose command: ${DOCKER_COMPOSE}"
+
+    # v1 standalone is present but broken with newer Docker image formats.
+    # Install the v2 plugin instead.
+    info "docker compose v2 plugin not found — installing..."
+    if [ "$PKG_FAMILY" = "debian" ]; then
+        $SUDO $PKG_INSTALL docker-compose-plugin 2>/dev/null || true
+    else
+        $SUDO $PKG_INSTALL docker-compose-plugin 2>/dev/null || true
+    fi
+
+    if docker compose version &>/dev/null 2>&1; then
+        DOCKER_COMPOSE="docker compose"
+        info "Using compose command: docker compose (v2)"
+        return
+    fi
+
+    # Last resort: fall back to v1 but warn loudly
+    if command -v docker-compose &>/dev/null; then
+        DOCKER_COMPOSE="docker-compose"
+        warn "Using docker-compose v1 — if you hit 'ContainerConfig' errors, run:"
+        warn "  sudo apt-get install docker-compose-plugin"
+    else
+        error "No Docker Compose found. Install with: sudo apt-get install docker-compose-plugin"
+    fi
 }
 
 # ── Start infrastructure services ────────────────────────────────────────────
 start_services() {
     info "Starting infrastructure services (postgres, redis, chromadb)..."
-    $DOCKER_COMPOSE up -d postgres redis chromadb
-    info "Waiting for services to become healthy..."
-    local retries=30
-    while [ $retries -gt 0 ]; do
-        if $DOCKER_COMPOSE ps | grep -E "postgres|redis|chromadb" | grep -qv "healthy\|running"; then
-            sleep 2
-            retries=$((retries - 1))
+
+    # Create shared network if it doesn't exist
+    docker network create aise-network 2>/dev/null || true
+
+    # Create named volumes if they don't exist
+    docker volume create aise_postgres_data 2>/dev/null || true
+    docker volume create aise_redis_data    2>/dev/null || true
+    docker volume create aise_chroma_data   2>/dev/null || true
+
+    # ── PostgreSQL ──────────────────────────────────────────────────────────
+    if docker ps -a --format '{{.Names}}' | grep -q "^aise-postgres$"; then
+        if ! docker ps --format '{{.Names}}' | grep -q "^aise-postgres$"; then
+            info "Starting existing aise-postgres container..."
+            docker start aise-postgres
         else
-            break
+            info "aise-postgres already running."
         fi
-    done
-    # Give a few extra seconds for postgres to finish init
-    sleep 5
+    else
+        info "Creating aise-postgres..."
+        docker run -d \
+            --name aise-postgres \
+            --network aise-network \
+            --restart unless-stopped \
+            -e POSTGRES_USER=aise \
+            -e "POSTGRES_PASSWORD=${POSTGRES_PASS}" \
+            -e POSTGRES_DB=aise \
+            -p 5434:5432 \
+            -v aise_postgres_data:/var/lib/postgresql/data \
+            -v "$(pwd)/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro" \
+            postgres:16-alpine
+    fi
+
+    # ── Redis ───────────────────────────────────────────────────────────────
+    if docker ps -a --format '{{.Names}}' | grep -q "^aise-redis$"; then
+        if ! docker ps --format '{{.Names}}' | grep -q "^aise-redis$"; then
+            info "Starting existing aise-redis container..."
+            docker start aise-redis
+        else
+            info "aise-redis already running."
+        fi
+    else
+        info "Creating aise-redis..."
+        docker run -d \
+            --name aise-redis \
+            --network aise-network \
+            --restart unless-stopped \
+            -p 6380:6379 \
+            -v aise_redis_data:/data \
+            redis:7-alpine \
+            redis-server --appendonly yes \
+                --requirepass "${REDIS_PASS}" \
+                --maxmemory 256mb \
+                --maxmemory-policy allkeys-lru
+    fi
+
+    # ── ChromaDB ────────────────────────────────────────────────────────────
+    if docker ps -a --format '{{.Names}}' | grep -q "^aise-chromadb$"; then
+        if ! docker ps --format '{{.Names}}' | grep -q "^aise-chromadb$"; then
+            info "Starting existing aise-chromadb container..."
+            docker start aise-chromadb
+        else
+            info "aise-chromadb already running."
+        fi
+    else
+        info "Creating aise-chromadb..."
+        docker run -d \
+            --name aise-chromadb \
+            --network aise-network \
+            --restart unless-stopped \
+            -p 8000:8000 \
+            -v aise_chroma_data:/chroma/chroma \
+            -e IS_PERSISTENT=TRUE \
+            -e ANONYMIZED_TELEMETRY=FALSE \
+            chromadb/chroma:latest
+    fi
+
+    info "Waiting for services to become ready..."
+    sleep 8
     success "Infrastructure services started."
 }
 
@@ -408,21 +543,22 @@ verify_services() {
     info "Verifying service connectivity..."
 
     # PostgreSQL
-    if $DOCKER_COMPOSE exec -T postgres pg_isready -U aise -d aise &>/dev/null; then
+    if docker exec aise-postgres pg_isready -U aise -d aise &>/dev/null; then
         success "PostgreSQL: reachable"
     else
         warn "PostgreSQL: not yet ready (may still be initializing)"
     fi
 
     # Redis
-    if $DOCKER_COMPOSE exec -T redis redis-cli -a "${REDIS_PASS}" ping 2>/dev/null | grep -q PONG; then
+    if docker exec aise-redis redis-cli -a "${REDIS_PASS}" ping 2>/dev/null | grep -q PONG; then
         success "Redis: reachable"
     else
         warn "Redis: not yet ready"
     fi
 
     # ChromaDB
-    if curl -sf http://localhost:8000/api/v2/heartbeat &>/dev/null; then
+    if curl -sf http://localhost:8000/api/v2/heartbeat &>/dev/null || \
+       curl -sf http://localhost:8000/api/v1/heartbeat &>/dev/null; then
         success "ChromaDB: reachable"
     else
         warn "ChromaDB: not yet ready"
