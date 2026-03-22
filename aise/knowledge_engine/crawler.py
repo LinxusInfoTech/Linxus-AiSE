@@ -95,6 +95,7 @@ class DocumentCrawler:
         self.visited_urls: Set[str] = set()
         self.crawled_urls: List[str] = []
         self.failed_urls: List[str] = []
+        self._page_html: Dict[str, str] = {}
     
     async def crawl(
         self,
@@ -109,6 +110,26 @@ class DocumentCrawler:
         
         Returns:
             List of successfully crawled URLs
+        
+        Raises:
+            KnowledgeEngineError: If crawling fails
+        """
+        results = await self.crawl_with_content(start_url, allowed_domains)
+        return [url for url, _ in results]
+
+    async def crawl_with_content(
+        self,
+        start_url: str,
+        allowed_domains: Optional[List[str]] = None
+    ) -> List[tuple]:
+        """Crawl website and return (url, html) pairs.
+        
+        Args:
+            start_url: URL to start crawling from
+            allowed_domains: List of allowed domains (defaults to start URL domain)
+        
+        Returns:
+            List of (url, html) tuples for successfully crawled pages
         
         Raises:
             KnowledgeEngineError: If crawling fails
@@ -138,6 +159,7 @@ class DocumentCrawler:
             self.visited_urls.clear()
             self.crawled_urls.clear()
             self.failed_urls.clear()
+            self._page_html: Dict[str, str] = {}  # url -> html cache
             
             # Create session
             timeout = aiohttp.ClientTimeout(total=self.timeout)
@@ -157,7 +179,8 @@ class DocumentCrawler:
                 max_depth_reached=self.max_depth
             )
             
-            return self.crawled_urls
+            # Return (url, html) pairs
+            return [(url, self._page_html.get(url, "")) for url in self.crawled_urls]
             
         except Exception as e:
             logger.error("crawl_failed", error=str(e), start_url=start_url)
@@ -219,6 +242,7 @@ class DocumentCrawler:
             html = await self._fetch_page(session, url)
             if html:
                 self.crawled_urls.append(url)
+                self._page_html[url] = html  # cache for reuse by init_runner
                 logger.debug(
                     "page_crawled",
                     url=url,

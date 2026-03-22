@@ -20,7 +20,6 @@ Example usage:
 """
 
 import asyncio
-import aiohttp
 from dataclasses import dataclass
 from typing import List, Optional
 from datetime import datetime
@@ -131,10 +130,10 @@ class InitRunner:
 
             logger.info("pipeline_started", source_name=source_name, url=url)
 
-            # Step 2: Crawl pages
-            crawled_urls = await self._crawler.crawl(url)
+            # Step 2: Crawl pages (returns (url, html) pairs)
+            crawled_pages = await self._crawler.crawl_with_content(url)
 
-            if not crawled_urls:
+            if not crawled_pages:
                 duration = time.time() - start_time
                 return InitResult(
                     source_name=source_name,
@@ -146,43 +145,31 @@ class InitRunner:
                     error="No pages were crawled"
                 )
 
-            logger.info("crawl_done", source_name=source_name, pages=len(crawled_urls))
+            logger.info("crawl_done", source_name=source_name, pages=len(crawled_pages))
 
-            # Step 3: Fetch HTML and extract + chunk content
+            # Step 3: Extract + chunk content from cached HTML (no re-fetch needed)
             all_chunks = []
-            timeout = aiohttp.ClientTimeout(total=30)
 
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                for page_url in crawled_urls:
-                    try:
-                        async with session.get(
-                            page_url,
-                            headers={"User-Agent": "AiSE-DocumentCrawler/1.0"}
-                        ) as response:
-                            if response.status != 200:
-                                continue
-                            content_type = response.headers.get("Content-Type", "")
-                            if "text/html" not in content_type.lower():
-                                continue
-                            html = await response.text()
+            for page_url, html in crawled_pages:
+                try:
+                    if not html:
+                        continue
 
-                        # Step 3a: Extract Markdown
-                        markdown = await self._extractor.extract_content(page_url, html)
-                        if not markdown or not markdown.strip():
-                            continue
+                    # Step 3a: Extract Markdown
+                    markdown = await self._extractor.extract_content(page_url, html)
+                    if not markdown or not markdown.strip():
+                        continue
 
-                        # Step 3b: Chunk
-                        chunks = self._chunker.chunk(
-                            markdown,
-                            source_url=page_url,
-                            metadata={"source": source_name}
-                        )
-                        all_chunks.extend(chunks)
+                    # Step 3b: Chunk
+                    chunks = self._chunker.chunk(
+                        markdown,
+                        source_url=page_url,
+                        metadata={"source": source_name}
+                    )
+                    all_chunks.extend(chunks)
 
-                    except asyncio.TimeoutError:
-                        logger.warning("page_fetch_timeout", url=page_url)
-                    except Exception as e:
-                        logger.warning("page_processing_failed", url=page_url, error=str(e))
+                except Exception as e:
+                    logger.warning("page_processing_failed", url=page_url, error=str(e))
 
             if not all_chunks:
                 duration = time.time() - start_time
