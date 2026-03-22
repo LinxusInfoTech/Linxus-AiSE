@@ -106,6 +106,18 @@ class TextChunker:
                 )
                 chunks.extend(section_chunks)
             
+            # Re-assign IDs with global index to guarantee uniqueness
+            seen_ids = {}
+            for i, chunk in enumerate(chunks):
+                base_id = self._generate_chunk_id(chunk.content, source_url, i)
+                # Extra safety: if still colliding, append counter
+                if base_id in seen_ids:
+                    seen_ids[base_id] += 1
+                    chunk.id = f"{base_id}{seen_ids[base_id]:02x}"
+                else:
+                    seen_ids[base_id] = 0
+                    chunk.id = base_id
+            
             logger.info(
                 "chunking_complete",
                 source_url=source_url,
@@ -346,16 +358,17 @@ class TextChunker:
             created_at=None
         )
     
-    def _generate_chunk_id(self, content: str, source_url: str) -> str:
+    def _generate_chunk_id(self, content: str, source_url: str, index: int = 0) -> str:
         """Generate deterministic chunk ID.
         
         Args:
             content: Chunk content
             source_url: Source URL
+            index: Position index to ensure uniqueness for identical content
         
         Returns:
             Chunk ID (hash)
         """
-        # Create hash from content and URL
-        hash_input = f"{source_url}:{content}".encode("utf-8")
+        # Include index to prevent collisions from identical content across pages
+        hash_input = f"{source_url}:{index}:{content}".encode("utf-8")
         return hashlib.sha256(hash_input).hexdigest()[:16]

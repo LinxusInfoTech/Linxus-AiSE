@@ -265,6 +265,12 @@ class ChromaDBVectorStore(VectorStore):
             return
         
         try:
+            # Deduplicate chunks by ID within this batch (last one wins)
+            seen = {}
+            for chunk in chunks:
+                seen[chunk.id] = chunk
+            chunks = list(seen.values())
+
             # Prepare data for ChromaDB
             ids = [chunk.id for chunk in chunks]
             documents = [chunk.content for chunk in chunks]
