@@ -156,7 +156,13 @@ class ContentExtractor:
         Returns:
             Tag containing main content, or None if not found
         """
-        # Try common main content selectors
+        # Try by ID first (AWS docs use id="main-content" or id="main-col-body")
+        for id_name in ["main-content", "main-col-body", "main", "content", "article-body", "doc-content"]:
+            element = soup.find(id=id_name)
+            if element and len(element.get_text(strip=True)) > 100:
+                return element
+
+        # Try common main content selectors by tag/class
         selectors = [
             ("main", None),
             ("article", None),
@@ -172,23 +178,19 @@ class ContentExtractor:
         
         for tag_name, class_name in selectors:
             if class_name:
-                # Find by class
                 elements = soup.find_all(
                     tag_name,
                     class_=lambda x: x and class_name in x.lower()
                 )
             else:
-                # Find by tag name only
                 elements = soup.find_all(tag_name)
             
             if elements:
-                # Return the first (usually largest) element
                 return elements[0]
         
-        # If no main content found, try to find the largest div with text
+        # Fall back to largest div with text
         divs = soup.find_all("div")
         if divs:
-            # Sort by text length
             divs_with_text = [
                 (div, len(div.get_text(strip=True)))
                 for div in divs

@@ -99,8 +99,8 @@ class DocumentationRegistry:
             DocumentationSource(
                 name="aws",
                 display_name="Amazon Web Services (AWS)",
-                url="https://docs.aws.amazon.com/",
-                description="Official AWS documentation covering EC2, S3, Lambda, and all AWS services",
+                url="https://docs.aws.amazon.com/general/latest/gr/",
+                description="Official AWS General Reference documentation covering common concepts and services",
                 category=SourceCategory.CLOUD_PROVIDER,
                 estimated_size_mb=500,
                 estimated_pages=10000,
@@ -111,8 +111,8 @@ class DocumentationRegistry:
             DocumentationSource(
                 name="aws-linux",
                 display_name="AWS Linux Documentation",
-                url="https://docs.aws.amazon.com/linux/",
-                description="Official AWS Linux documentation for Amazon Linux instances",
+                url="https://docs.aws.amazon.com/linux/al2023/ug/",
+                description="Official AWS Linux 2023 User Guide",
                 category=SourceCategory.CLOUD_PROVIDER,
                 estimated_size_mb=50,
                 estimated_pages=500,
@@ -399,8 +399,10 @@ def get_registry() -> DocumentationRegistry:
 
 # Simple list format for compatibility with init_runner
 REGISTERED_SOURCES: List[Dict[str, str]] = [
-    {"name": "aws", "url": "https://docs.aws.amazon.com/"},
-    {"name": "aws-linux", "url": "https://docs.aws.amazon.com/linux/"},
+    # AWS: point to specific guides that have toc-contents.json
+    # The root docs.aws.amazon.com/ is a JS-rendered landing page with no crawlable links
+    {"name": "aws", "url": "https://docs.aws.amazon.com/general/latest/gr/"},
+    {"name": "aws-linux", "url": "https://docs.aws.amazon.com/linux/al2023/ug/"},
     {"name": "azure", "url": "https://learn.microsoft.com/en-us/azure/"},
     {"name": "ubuntu", "url": "https://help.ubuntu.com/"},
     {"name": "git", "url": "https://git-scm.com/doc"},

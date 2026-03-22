@@ -210,7 +210,7 @@ class InitRunner:
             logger.info(
                 "pipeline_completed",
                 source_name=source_name,
-                pages_crawled=len(crawled_urls),
+                pages_crawled=len(crawled_pages),
                 chunks_indexed=len(all_chunks),
                 duration_seconds=round(duration, 1)
             )

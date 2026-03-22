@@ -14,6 +14,7 @@ Example usage:
 
 import asyncio
 import aiohttp
+import json
 from typing import List, Set, Optional, Dict
 from urllib.parse import urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
@@ -164,13 +165,31 @@ class DocumentCrawler:
             # Create session
             timeout = aiohttp.ClientTimeout(total=self.timeout)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                # Crawl recursively
-                await self._crawl_recursive(
-                    session,
-                    start_url,
-                    allowed_domains,
-                    depth=0
-                )
+                # For AWS docs, try TOC-based discovery first (landing pages are JS-rendered)
+                toc_urls = await self._try_aws_toc_discovery(session, start_url)
+
+                if toc_urls:
+                    # Fetch each TOC page directly (no recursive crawl needed)
+                    for url in toc_urls:
+                        if len(self.crawled_urls) >= self.max_pages:
+                            break
+                        url = self._normalize_url(url)
+                        if url in self.visited_urls:
+                            continue
+                        self.visited_urls.add(url)
+                        await self.rate_limiter.acquire(urlparse(url).netloc)
+                        html = await self._fetch_page(session, url)
+                        if html:
+                            self.crawled_urls.append(url)
+                            self._page_html[url] = html
+                else:
+                    # Standard recursive crawl
+                    await self._crawl_recursive(
+                        session,
+                        start_url,
+                        allowed_domains,
+                        depth=0
+                    )
             
             logger.info(
                 "crawl_completed",
@@ -189,6 +208,62 @@ class DocumentCrawler:
                 field="start_url"
             )
     
+    async def _try_aws_toc_discovery(
+        self,
+        session: aiohttp.ClientSession,
+        start_url: str
+    ) -> List[str]:
+        """Attempt to discover AWS docs page URLs via toc-contents.json.
+
+        AWS docs landing pages are JS-rendered shells with no crawlable links.
+        However, each guide exposes a toc-contents.json that lists all pages.
+        This method fetches that JSON and returns absolute page URLs.
+
+        Args:
+            session: aiohttp session
+            start_url: The AWS docs URL (e.g. https://docs.aws.amazon.com/linux/)
+
+        Returns:
+            List of absolute page URLs, or empty list if not an AWS docs URL
+        """
+        parsed = urlparse(start_url)
+        if "docs.aws.amazon.com" not in parsed.netloc:
+            return []
+
+        # Normalise path: ensure it ends with /
+        base_path = parsed.path.rstrip("/") + "/"
+        toc_url = f"{parsed.scheme}://{parsed.netloc}{base_path}toc-contents.json"
+
+        try:
+            async with session.get(toc_url) as resp:
+                if resp.status != 200:
+                    logger.debug("aws_toc_not_found", toc_url=toc_url, status=resp.status)
+                    return []
+                toc = await resp.json(content_type=None)
+        except Exception as e:
+            logger.debug("aws_toc_fetch_failed", toc_url=toc_url, error=str(e))
+            return []
+
+        # Recursively collect all href values from the TOC tree
+        base_page_url = f"{parsed.scheme}://{parsed.netloc}{base_path}"
+        urls: List[str] = []
+
+        def _collect(node):
+            href = node.get("href")
+            if href and href.endswith(".html"):
+                urls.append(urljoin(base_page_url, href))
+            for child in node.get("contents", []):
+                _collect(child)
+
+        if isinstance(toc, dict):
+            _collect(toc)
+        elif isinstance(toc, list):
+            for item in toc:
+                _collect(item)
+
+        logger.info("aws_toc_discovered", toc_url=toc_url, page_count=len(urls))
+        return urls
+
     async def _crawl_recursive(
         self,
         session: aiohttp.ClientSession,
