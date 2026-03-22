@@ -15,7 +15,8 @@ This module provides comprehensive logging capabilities including:
 import logging
 import re
 import sys
-from typing import Any, Dict, Optional, List
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, List, Tuple
 import structlog
 from structlog.types import EventDict, Processor
 
@@ -29,12 +30,14 @@ EMAIL_PATTERN = re.compile(
     r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
 )
 
-# Phone number patterns: matches various formats
-# Matches: +1-234-567-8900, (234) 567-8900, 234-567-8900, 234.567.8900, 2345678900
+# Phone number pattern: requires explicit country code or parenthesised area code
+# to avoid false positives on version numbers / port numbers
 PHONE_PATTERN = re.compile(
-    r'(?:\+?1[-.\s]?)?'  # Optional country code
-    r'(?:\(?\d{3}\)?[-.\s]?)?'  # Area code
-    r'\d{3}[-.\s]?\d{4}'  # Main number
+    r'(?:'
+    r'\+\d{1,3}[-.\s]?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}'  # intl: +1-234-567-8900
+    r'|'
+    r'\(\d{3}\)[-.\s]?\d{3}[-.\s]?\d{4}'  # US with parens: (234) 567-8900
+    r')'
 )
 
 # IP address pattern: matches IPv4 addresses
@@ -66,6 +69,40 @@ API_KEY_PATTERN = re.compile(
 AWS_KEY_PATTERN = re.compile(
     r'\b(?:AKIA|ASIA)[0-9A-Z]{16}\b'
 )
+
+
+# ============================================================================
+# PII Configuration
+# ============================================================================
+
+@dataclass
+class PIIConfig:
+    """Controls which PII redaction rules are active.
+
+    All built-in rules are enabled by default. Set any flag to False to
+    disable it, or add custom (pattern, replacement) pairs via
+    ``extra_patterns``.
+
+    Example — disable IP redaction and add a custom SSN rule::
+
+        import re
+        from aise.core.logging import PIIConfig, setup_logging
+
+        config = PIIConfig(
+            redact_ip=False,
+            extra_patterns=[
+                (re.compile(r'\\b\\d{3}-\\d{2}-\\d{4}\\b'), '[SSN_REDACTED]')
+            ]
+        )
+        setup_logging(pii_config=config)
+    """
+    redact_email: bool = True
+    redact_phone: bool = True
+    redact_ip: bool = True
+    redact_credit_card: bool = True
+    redact_api_keys: bool = True
+    # List of (compiled_pattern, replacement_string) for custom rules
+    extra_patterns: List[Tuple[re.Pattern, str]] = field(default_factory=list)
 
 
 # ============================================================================
@@ -159,21 +196,31 @@ def redact_api_keys(text: str) -> str:
     return text
 
 
-def redact_pii(text: str) -> str:
+def redact_pii(text: str, config: Optional["PIIConfig"] = None) -> str:
     """
-    Apply all PII redaction rules to text.
-    
+    Apply PII redaction rules to text, controlled by config.
+
     Args:
         text: Input text potentially containing PII
-        
+        config: PIIConfig instance (uses all rules enabled if None)
+
     Returns:
-        Text with all PII redacted
+        Text with PII redacted according to config
     """
-    text = redact_email(text)
-    text = redact_phone(text)
-    text = redact_ip(text)
-    text = redact_credit_card(text)
-    text = redact_api_keys(text)
+    if config is None:
+        config = PIIConfig()
+    if config.redact_email:
+        text = redact_email(text)
+    if config.redact_phone:
+        text = redact_phone(text)
+    if config.redact_ip:
+        text = redact_ip(text)
+    if config.redact_credit_card:
+        text = redact_credit_card(text)
+    if config.redact_api_keys:
+        text = redact_api_keys(text)
+    for pattern, replacement in config.extra_patterns:
+        text = pattern.sub(replacement, text)
     return text
 
 
@@ -188,30 +235,28 @@ def pii_redaction_processor(
 ) -> EventDict:
     """
     Structlog processor that redacts PII from all string values in event dict.
-    
-    Args:
-        logger: Logger instance
-        method_name: Name of the logging method
-        event_dict: Event dictionary to process
-        
-    Returns:
-        Event dictionary with PII redacted
+
+    Uses the module-level ``_pii_config``. Call ``setup_logging(pii_config=...)``
+    to customise which rules are active.
     """
     def redact_value(value: Any) -> Any:
         """Recursively redact PII from values."""
         if isinstance(value, str):
-            return redact_pii(value)
+            return redact_pii(value, _pii_config)
         elif isinstance(value, dict):
             return {k: redact_value(v) for k, v in value.items()}
         elif isinstance(value, (list, tuple)):
             return type(value)(redact_value(item) for item in value)
         return value
-    
-    # Redact all values in event dict
+
     for key, value in event_dict.items():
         event_dict[key] = redact_value(value)
-    
+
     return event_dict
+
+
+# Module-level config — replaced by setup_logging(pii_config=...) at startup
+_pii_config: PIIConfig = PIIConfig()
 
 
 def add_context_processor(
@@ -245,44 +290,56 @@ def setup_logging(
     log_level: str = "INFO",
     debug: bool = False,
     json_output: bool = False,
-    enable_pii_redaction: bool = True
+    enable_pii_redaction: bool = True,
+    pii_config: Optional[PIIConfig] = None
 ) -> None:
     """
     Configure structured logging with structlog.
-    
-    This function sets up comprehensive logging with:
-    - JSON output for production or pretty console for development
-    - PII redaction for sensitive data
-    - API key masking
-    - Context variables support
-    - Multiple log levels
-    - Timestamp formatting
-    - Exception and stack trace handling
-    
+
     Args:
         log_level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         debug: Enable debug mode with verbose pretty console logging
         json_output: Force JSON output (overrides debug mode)
         enable_pii_redaction: Enable PII redaction in logs
-        
-    Example:
-        >>> # Development mode with pretty console output
-        >>> setup_logging(debug=True)
-        
-        >>> # Production mode with JSON output
-        >>> setup_logging(log_level="INFO", json_output=True)
-        
-        >>> # Custom configuration
-        >>> setup_logging(
-        ...     log_level="WARNING",
-        ...     json_output=True,
-        ...     enable_pii_redaction=True
-        ... )
+        pii_config: Fine-grained PIIConfig (overrides enable_pii_redaction
+            when provided). Use this to toggle individual rules or add
+            custom patterns without touching source code.
+
+    Example::
+
+        # Disable phone + IP redaction, add custom SSN rule
+        import re
+        from aise.core.logging import PIIConfig, setup_logging
+
+        setup_logging(
+            pii_config=PIIConfig(
+                redact_phone=False,
+                redact_ip=False,
+                extra_patterns=[(re.compile(r'\\b\\d{3}-\\d{2}-\\d{4}\\b'), '[SSN_REDACTED]')]
+            )
+        )
     """
+    global _pii_config
+
     # Override log level if debug is enabled
     if debug:
         log_level = "DEBUG"
-    
+
+    # Update module-level PII config
+    if pii_config is not None:
+        _pii_config = pii_config
+    elif not enable_pii_redaction:
+        # Convenience: disable all rules when enable_pii_redaction=False
+        _pii_config = PIIConfig(
+            redact_email=False,
+            redact_phone=False,
+            redact_ip=False,
+            redact_credit_card=False,
+            redact_api_keys=False,
+        )
+    else:
+        _pii_config = PIIConfig()  # all rules on
+
     # Determine output format — use pretty console unless JSON explicitly requested
     use_json = json_output
     
@@ -319,9 +376,9 @@ def setup_logging(
         # Format exception info
         structlog.processors.format_exc_info,
     ]
-    
-    # Add PII redaction if enabled
-    if enable_pii_redaction:
+
+    # Add PII redaction processor — active rules are controlled by _pii_config
+    if enable_pii_redaction or pii_config is not None:
         processors.append(pii_redaction_processor)
     
     # Add final renderer based on output format
