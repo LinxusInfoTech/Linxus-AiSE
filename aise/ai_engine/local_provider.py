@@ -154,8 +154,8 @@ class OllamaProvider(LLMProvider):
             )
         
         except Exception as e:
-            logger.error("ollama_completion_failed", error=str(e), model=model)
-            raise ProviderError(f"Ollama completion failed: {str(e)}")
+            logger.error("ollama_completion_failed", error=str(e), exc_type=type(e).__name__, model=model)
+            raise ProviderError(f"Ollama completion failed: {type(e).__name__}: {str(e)}")
     
     async def stream_complete(
         self,
@@ -239,8 +239,8 @@ class OllamaProvider(LLMProvider):
             )
         
         except Exception as e:
-            logger.error("ollama_stream_failed", error=str(e), model=model)
-            raise ProviderError(f"Ollama streaming failed: {str(e)}")
+            logger.error("ollama_stream_failed", error=str(e), exc_type=type(e).__name__, model=model)
+            raise ProviderError(f"Ollama streaming failed: {type(e).__name__}: {str(e)}")
     
     def count_tokens(self, text: str, model: Optional[str] = None) -> int:
         """Count tokens in text (approximate).

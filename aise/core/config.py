@@ -699,6 +699,21 @@ def get_config() -> Config:
     return _config
 
 
+def _find_env_file() -> str:
+    """Locate .env by walking up from CWD, then falling back to the package root."""
+    # Walk up from CWD
+    current = Path(".").resolve()
+    for directory in [current] + list(current.parents):
+        candidate = directory / ".env"
+        if candidate.exists():
+            return str(candidate)
+    # Fallback: project root relative to this file (aise/core/config.py)
+    project_root_env = Path(__file__).parent.parent.parent / ".env"
+    if project_root_env.exists():
+        return str(project_root_env)
+    return ".env"
+
+
 def load_config() -> Config:
     """
     Load and validate configuration from all sources.
@@ -712,6 +727,8 @@ def load_config() -> Config:
     global _config
     
     try:
+        env_file = _find_env_file()
+        Config.model_config["env_file"] = env_file
         _config = Config()
 
         # Configure structured logging with settings from config
