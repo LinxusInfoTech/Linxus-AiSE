@@ -46,7 +46,7 @@ class OllamaProvider(LLMProvider):
         self._default_model = getattr(config, "OLLAMA_MODEL", "phi3")
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
-            timeout=120.0  # Longer timeout for local inference
+            timeout=300.0  # 5 min — CPU inference is slow, especially for large models
         )
         
         logger.info(

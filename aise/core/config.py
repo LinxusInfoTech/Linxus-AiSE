@@ -442,7 +442,8 @@ class Config(BaseSettings):
             if key and (name == "ollama" or key)
         ]
         
-        if len(configured_providers) == 1:
+        # Only warn about single provider if not using ollama (ollama-only is a valid local setup)
+        if len(configured_providers) == 1 and selected_provider != "ollama":
             logger.warning(
                 "Only one LLM provider configured. Consider adding fallback providers for reliability.",
                 provider=selected_provider
@@ -736,7 +737,7 @@ def load_config() -> Config:
         setup_logging(
             log_level=_config.LOG_LEVEL,
             debug=_config.DEBUG,
-            json_output=not _config.DEBUG,
+            json_output=False,  # always human-readable on console; set True for container/prod
             enable_pii_redaction=True,
         )
 
