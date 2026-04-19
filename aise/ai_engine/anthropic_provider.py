@@ -65,26 +65,40 @@ class AnthropicProvider(LLMProvider):
         """Initialize Anthropic provider.
         
         Args:
-            config: Configuration instance with ANTHROPIC_API_KEY
+            config: Configuration instance with ANTHROPIC_API_KEY or Bedrock settings
         
         Raises:
-            AuthenticationError: If API key is not configured
+            AuthenticationError: If neither API key nor Bedrock is configured
         """
         super().__init__(config)
-        
-        if not config.ANTHROPIC_API_KEY:
-            raise AuthenticationError(
-                "ANTHROPIC_API_KEY not configured. "
-                "Set it in .env or via 'aise config set ANTHROPIC_API_KEY <key>'"
+
+        use_bedrock = getattr(config, "ANTHROPIC_USE_BEDROCK", False)
+
+        if use_bedrock:
+            region = getattr(config, "ANTHROPIC_BEDROCK_REGION", "ap-south-1")
+            self._client = anthropic.AsyncAnthropicBedrock(aws_region=region)
+            self._default_model = getattr(
+                config, "ANTHROPIC_MODEL", "anthropic.claude-3-5-sonnet-20241022-v2:0"
             )
-        
-        self._client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
-        self._default_model = getattr(config, "ANTHROPIC_MODEL", "claude-3-sonnet-20240229")
-        
-        logger.info(
-            "anthropic_provider_initialized",
-            default_model=self._default_model
-        )
+            logger.info(
+                "anthropic_provider_initialized",
+                backend="bedrock",
+                region=region,
+                default_model=self._default_model
+            )
+        else:
+            if not config.ANTHROPIC_API_KEY:
+                raise AuthenticationError(
+                    "ANTHROPIC_API_KEY not configured. "
+                    "Set it in .env or set ANTHROPIC_USE_BEDROCK=true to use AWS Bedrock."
+                )
+            self._client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
+            self._default_model = getattr(config, "ANTHROPIC_MODEL", "claude-3-sonnet-20240229")
+            logger.info(
+                "anthropic_provider_initialized",
+                backend="direct",
+                default_model=self._default_model
+            )
     
     @retry(
         stop=stop_after_attempt(3),

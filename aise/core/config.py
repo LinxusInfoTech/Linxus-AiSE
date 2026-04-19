@@ -46,7 +46,23 @@ class Config(BaseSettings):
     
     ANTHROPIC_API_KEY: Optional[str] = Field(
         default=None,
-        description="Anthropic Claude API key"
+        description="Anthropic Claude API key (not needed when using Bedrock)"
+    )
+
+    # Bedrock: set to true to use AWS Bedrock instead of direct Anthropic API
+    ANTHROPIC_USE_BEDROCK: bool = Field(
+        default=False,
+        description="Use AWS Bedrock to access Claude instead of direct Anthropic API"
+    )
+
+    ANTHROPIC_BEDROCK_REGION: str = Field(
+        default="ap-south-1",
+        description="AWS region for Bedrock (only used when ANTHROPIC_USE_BEDROCK=true)"
+    )
+
+    ANTHROPIC_MODEL: str = Field(
+        default="anthropic.claude-3-5-sonnet-20241022-v2:0",
+        description="Claude model ID (use Bedrock model IDs when ANTHROPIC_USE_BEDROCK=true)"
     )
     
     OPENAI_API_KEY: Optional[str] = Field(
@@ -429,6 +445,9 @@ class Config(BaseSettings):
             # Ollama doesn't need API key, just URL
             if not self.OLLAMA_BASE_URL:
                 raise ValueError("OLLAMA_BASE_URL is required when using ollama provider")
+        elif selected_provider == "anthropic" and self.ANTHROPIC_USE_BEDROCK:
+            # Bedrock uses AWS credentials — no API key needed
+            pass
         else:
             if not provider_keys.get(selected_provider):
                 raise ValueError(
